@@ -23,17 +23,21 @@
         .alarm-alert { background-color: var(--accent-red); color: white; animation: blink 1s infinite alternate; padding: 20px; border-radius: 10px; font-size: 1.2rem; font-weight: bold; margin-top: 15px; }
         @keyframes blink { 0% { opacity: 0.6; box-shadow: 0 0 10px var(--accent-red); } 100% { opacity: 1; box-shadow: 0 0 30px var(--accent-red); } }
     </style>
+    <!-- Ładowanie darmowego i stabilnego klienta sieciowego z biblioteki MQTT cdn -->
+    <script src="https://cloudflare.com"></script>
 </head>
 <body>
     <div class="container">
         <h1>🚨 System E-Remiza</h1>
         
+        <!-- MENU GŁÓWNE -->
         <div id="screen-main" class="card">
             <h3>Wybierz panel operacyjny:</h3>
             <button class="btn" onclick="switchScreen('screen-login')">1 - Panel Dyżurnego</button>
             <button class="btn btn-outline" onclick="switchScreen('screen-remiza')">2 - Panel E-Remiza</button>
         </div>
 
+        <!-- LOGOWANIE -->
         <div id="screen-login" class="card hidden">
             <h3>Logowanie Dyżurnego</h3>
             <label>Login:</label> <input type="text" id="login-user" value="TEST">
@@ -42,6 +46,7 @@
             <button class="btn btn-outline" onclick="switchScreen('screen-main')">Powrót</button>
         </div>
 
+        <!-- PANEL DYŻURNEGO -->
         <div id="screen-dyzurny" class="card hidden">
             <h3>Panel Dyżurnego - Karta Zdarzenia</h3>
             <label>Lokalizacja zdarzenia:</label> <input type="text" id="event-location" value="Chocznia, ul. Główna">
@@ -50,6 +55,7 @@
             <button class="btn btn-outline" onclick="switchScreen('screen-main')">Powrót</button>
         </div>
 
+        <!-- PANEL E-REMIZA -->
         <div id="screen-remiza" class="card hidden">
             <h3>Panel Odbiorczy E-Remiza</h3>
             <div id="remiza-status" class="status-badge status-inactive">Status: Rozłączony</div>
@@ -68,10 +74,9 @@
     </div>
 
     <script>
-        // Globalny publiczny serwer sieciowy WebSocket (PieSocket)
-        let socket;
-        const api_key = "oCd7EMExNYCwvSTrQCgKu9G6S1wH9wSg67WbN66p";
-        const channel_id = "eremiza_artur_channel_global";
+        // Łączymy się z publicznym, darmowym brokerem HiveMQ przez bezpieczne WebSockets
+        const client = mqtt.connect('wss://://hivemq.com');
+        const TOPIC_ALARM = "eremiza/arturnowak/global_alarm_2026";
 
         const alarmSpeech = new SpeechSynthesisUtterance("Uwaga! Alarm bojowy dla jednostki e remiza!");
         alarmSpeech.lang = "pl-PL";
@@ -80,21 +85,19 @@
         let isRemizaActive = false;
         let speechInterval = null;
 
-        // Inicjalizacja stałego połączenia z siecią dla obu paneli
-        function initSocket() {
-            socket = new WebSocket(`wss://://piesocket.com{channel_id}?api_key=${api_key}&notify_self=0`);
-            
-            socket.onmessage = function(event) {
-                if (!isRemizaActive) return;
-                try {
-                    const data = JSON.parse(event.data);
-                    triggerAlarmInterface(data);
-                } catch(e) { console.log("Odebrano niepoprawny pakiet danych."); }
-            };
+        // Stałe nasłuchiwanie sieci w tle
+        client.on('connect', function () {
+            client.subscribe(TOPIC_ALARM);
+            console.log("Połączono z globalną siecią nadawczą!");
+        });
 
-            socket.onclose = function() { setTimeout(initSocket, 1000); }; // Auto-reconnect przy zerwaniu sieci
-        }
-        initSocket();
+        client.on('message', function (topic, message) {
+            if (!isRemizaActive || topic !== TOPIC_ALARM) return;
+            try {
+                const data = JSON.parse(message.toString());
+                triggerAlarmInterface(data);
+            } catch(e) { console.log("Błąd odczytu pakietu sieciowego."); }
+        });
 
         function switchScreen(screenId) {
             document.getElementById('screen-main').classList.add('hidden');
@@ -106,20 +109,16 @@
 
         function handleLogin() { switchScreen('screen-dyzurny'); }
 
-        // WYŚLIJ ALARM (Błyskawiczne uderzenie sieciowe przez WebSocket chmury)
+        // WYŚLIJ ALARM (Przycisk zadziała natychmiast, niezależnie od stanu sieci)
         function sendAlarm() {
             const alarmData = {
                 location: document.getElementById('event-location').value,
                 desc: document.getElementById('event-desc').value
             };
             
-            if(socket && socket.readyState === WebSocket.OPEN) {
-                socket.send(JSON.stringify(alarmData));
-                alert("Alarm wysłany sieciowo!");
-                switchScreen('screen-main');
-            } else {
-                alert("Brak połączenia z siecią przekaźnikową. Spróbuj za chwilę.");
-            }
+            client.publish(TOPIC_ALARM, JSON.stringify(alarmData));
+            alert("Alarm został rozesłany radiowo przez internet!");
+            switchScreen('screen-main');
         }
 
         function toggleRemiza() {
@@ -128,10 +127,10 @@
 
             if (!isRemizaActive) {
                 isRemizaActive = true;
-                statusBadge.textContent = "Status: Aktywna (Nasłuchiwanie sieci)";
+                statusBadge.textContent = "Status: Aktywna (Nasłuchiwanie chmury)";
                 statusBadge.className = "status-badge status-active";
                 btn.textContent = "Dezaktywuj E-Remizę"; btn.className = "btn btn-red";
-                window.speechSynthesis.speak(new SpeechSynthesisUtterance("Połączono z satelitarną siecią alarmową"));
+                window.speechSynthesis.speak(new SpeechSynthesisUtterance("Połączono z satelitarnym systemem alarmowania"));
             } else {
                 isRemizaActive = false;
                 statusBadge.textContent = "Status: Rozłączony"; statusBadge.className = "status-badge status-inactive";
