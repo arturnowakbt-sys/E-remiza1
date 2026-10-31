@@ -23,8 +23,6 @@
         .alarm-alert { background-color: var(--accent-red); color: white; animation: blink 1s infinite alternate; padding: 20px; border-radius: 10px; font-size: 1.2rem; font-weight: bold; margin-top: 15px; }
         @keyframes blink { 0% { opacity: 0.6; box-shadow: 0 0 10px var(--accent-red); } 100% { opacity: 1; box-shadow: 0 0 30px var(--accent-red); } }
     </style>
-    <!-- Ładowanie darmowego i stabilnego klienta sieciowego z biblioteki MQTT cdn -->
-    <script src="https://cloudflare.com"></script>
 </head>
 <body>
     <div class="container">
@@ -58,7 +56,7 @@
         <!-- PANEL E-REMIZA -->
         <div id="screen-remiza" class="card hidden">
             <h3>Panel Odbiorczy E-Remiza</h3>
-            <div id="remiza-status" class="status-badge status-inactive">Status: Rozłączony</div>
+            <div id="remiza-status" class="status-badge status-inactive">Status: Nieaktywna</div>
             <button class="btn btn-green" id="btn-activate-remiza" onclick="toggleRemiza()">Aktywuj E-Remizę</button>
             
             <div id="alarm-box" class="hidden">
@@ -74,9 +72,9 @@
     </div>
 
     <script>
-        // Łączymy się z publicznym, darmowym brokerem HiveMQ przez bezpieczne WebSockets
-        const client = mqtt.connect('wss://://hivemq.com');
-        const TOPIC_ALARM = "eremiza/arturnowak/global_alarm_2026";
+        // Dane dostępowe do przygotowanej przeze mnie publicznej bazy danych w chmurze
+        const BIN_URL = "https://jsonbin.io";
+        const API_KEY = "$2a$10$wKxN74h2H2L6g61Cqj8NLeTf0Dveo/bI5bRErPzXgWJ4hF1Yq8S62";
 
         const alarmSpeech = new SpeechSynthesisUtterance("Uwaga! Alarm bojowy dla jednostki e remiza!");
         alarmSpeech.lang = "pl-PL";
@@ -84,20 +82,7 @@
 
         let isRemizaActive = false;
         let speechInterval = null;
-
-        // Stałe nasłuchiwanie sieci w tle
-        client.on('connect', function () {
-            client.subscribe(TOPIC_ALARM);
-            console.log("Połączono z globalną siecią nadawczą!");
-        });
-
-        client.on('message', function (topic, message) {
-            if (!isRemizaActive || topic !== TOPIC_ALARM) return;
-            try {
-                const data = JSON.parse(message.toString());
-                triggerAlarmInterface(data);
-            } catch(e) { console.log("Błąd odczytu pakietu sieciowego."); }
-        });
+        let bazyDanychInterval = null;
 
         function switchScreen(screenId) {
             document.getElementById('screen-main').classList.add('hidden');
@@ -109,18 +94,31 @@
 
         function handleLogin() { switchScreen('screen-dyzurny'); }
 
-        // WYŚLIJ ALARM (Przycisk zadziała natychmiast, niezależnie od stanu sieci)
+        // DYŻURNY: Zapisuje informację o alarmie w bazie danych w chmurze
         function sendAlarm() {
             const alarmData = {
                 location: document.getElementById('event-location').value,
-                desc: document.getElementById('event-desc').value
+                desc: document.getElementById('event-desc').value,
+                timestamp: Date.now()
             };
-            
-            client.publish(TOPIC_ALARM, JSON.stringify(alarmData));
-            alert("Alarm został rozesłany radiowo przez internet!");
-            switchScreen('screen-main');
+
+            fetch(BIN_URL, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Master-Key': API_KEY
+                },
+                body: JSON.stringify(alarmData)
+            })
+            .then(res => res.json())
+            .then(() => {
+                alert("Alarm został zapisany w chmurze!");
+                switchScreen('screen-main');
+            })
+            .catch(err => alert("Błąd zapisu w bazie: " + err));
         }
 
+        // REMIZA: Włączenie czuwania uruchamia sprawdzanie bazy w chmurze co 1.5 sekundy
         function toggleRemiza() {
             const statusBadge = document.getElementById('remiza-status');
             const btn = document.getElementById('btn-activate-remiza');
@@ -130,30 +128,58 @@
                 statusBadge.textContent = "Status: Aktywna (Nasłuchiwanie chmury)";
                 statusBadge.className = "status-badge status-active";
                 btn.textContent = "Dezaktywuj E-Remizę"; btn.className = "btn btn-red";
-                window.speechSynthesis.speak(new SpeechSynthesisUtterance("Połączono z satelitarnym systemem alarmowania"));
+                
+                window.speechSynthesis.speak(new SpeechSynthesisUtterance("Połączono z bazą danych"));
+
+                // Rozpoczynamy cykliczne sprawdzanie tablicy ogłoszeń w internecie
+                bazyDanychInterval = setInterval(pobierzAlarmZChmury, 1500);
             } else {
                 isRemizaActive = false;
-                statusBadge.textContent = "Status: Rozłączony"; statusBadge.className = "status-badge status-inactive";
+                statusBadge.textContent = "Status: Nieaktywna"; statusBadge.className = "status-badge status-inactive";
                 btn.textContent = "Aktywuj E-Remizę"; btn.className = "btn btn-green";
+                clearInterval(bazyDanychInterval);
                 silenceAlarm();
             }
         }
 
-        function triggerAlarmInterface(data) {
-            switchScreen('screen-remiza');
-            document.getElementById('alarm-display-loc').textContent = data.location;
-            document.getElementById('alarm-display-desc').textContent = data.desc;
-            document.getElementById('alarm-box').classList.remove('hidden');
-            
-            if(!speechInterval) {
-                window.speechSynthesis.speak(alarmSpeech);
-                speechInterval = setInterval(() => { window.speechSynthesis.speak(alarmSpeech); }, 4000);
-            }
+        // FUNKCJA KTÓRA CZYTA BAZĘ DANYCH W INTERNECIE
+        function pobierzAlarmZChmury() {
+            if (!isRemizaActive) return;
+
+            fetch(BIN_URL, {
+                method: 'GET',
+                headers: { 'X-Master-Key': API_KEY }
+            })
+            .then(res => res.json())
+            .then(resData => {
+                const data = resData.record;
+                // Jeśli w bazie jest świeży alarm (z ostatnich 30 sekund), odpalamy syrenę!
+                if (data && data.timestamp && (Date.now() - data.timestamp < 30000)) {
+                    
+                    switchScreen('screen-remiza');
+                    document.getElementById('alarm-display-loc').textContent = data.location;
+                    document.getElementById('alarm-display-desc').textContent = data.desc;
+                    document.getElementById('alarm-box').classList.remove('hidden');
+                    
+                    if (!speechInterval) {
+                        window.speechSynthesis.speak(alarmSpeech);
+                        speechInterval = setInterval(() => { window.speechSynthesis.speak(alarmSpeech); }, 4000);
+                    }
+                }
+            })
+            .catch(e => console.log("Czuwanie..."));
         }
 
         function silenceAlarm() {
             clearInterval(speechInterval); speechInterval = null; window.speechSynthesis.cancel();
             document.getElementById('alarm-box').classList.add('hidden');
+            
+            // Czyścimy bazę w chmurze, żeby alarm nie wył bez przerwy
+            fetch(BIN_URL, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json', 'X-Master-Key': API_KEY },
+                body: JSON.stringify({})
+            });
         }
     </script>
 </body>
