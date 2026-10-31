@@ -79,6 +79,9 @@
         let isRemizaActive = false;
         let speechInterval = null;
 
+        // Uruchomienie bezbłędnego kanału radiowego między kartami
+        const radioChannel = new BroadcastChannel('eremiza_global_radio_channel');
+
         function switchScreen(screenId) {
             document.getElementById('screen-main').classList.add('hidden');
             document.getElementById('screen-login').classList.add('hidden');
@@ -89,15 +92,16 @@
 
         function handleLogin() { switchScreen('screen-dyzurny'); }
 
-        // WYŚLIJ ALARM (Zapisuje dane w pamięci przeglądarki)
+        // WYŚLIJ ALARM (Rozsyła sygnał radiowy do wszystkich otwartych kart)
         function sendAlarm() {
             const alarmData = {
                 location: document.getElementById('event-location').value,
-                desc: document.getElementById('event-desc').value,
-                id: Math.random() // Losowa liczba zmusza drugą kartę do natychmiastowej reakcji
+                desc: document.getElementById('event-desc').value
             };
-            localStorage.setItem('eremiza_shared_alarm', JSON.stringify(alarmData));
-            alert("Alarm został wysłany między kartami!");
+            
+            // Nadajemy sygnał w świat!
+            radioChannel.postMessage(alarmData);
+            alert("Sygnał alarmu nadany radiowo do wszystkich kart!");
         }
 
         function toggleRemiza() {
@@ -109,7 +113,7 @@
                 statusBadge.textContent = "Status: Aktywna (Czuwanie włączone)";
                 statusBadge.className = "status-badge status-active";
                 btn.textContent = "Dezaktywuj E-Remizę"; btn.className = "btn btn-red";
-                window.speechSynthesis.speak(new SpeechSynthesisUtterance("System czuwa"));
+                window.speechSynthesis.speak(new SpeechSynthesisUtterance("System czuwa i nasłuchuje"));
             } else {
                 isRemizaActive = false;
                 statusBadge.textContent = "Status: Nieaktywna"; statusBadge.className = "status-badge status-inactive";
@@ -118,29 +122,29 @@
             }
         }
 
-        // UKRYTY DETEKTOR — Słucha zmian z innych kart przeglądarki
-        window.addEventListener('storage', function(event) {
-            if (event.key === 'eremiza_shared_alarm' && isRemizaActive && event.newValue) {
-                const data = JSON.parse(event.newValue);
-                
-                // Automatycznie przełącz tę kartę na ekran E-Remizy, aby pokazać alarm
-                switchScreen('screen-remiza');
+        // AKTYWNY NASŁUCH RADIOWY — Karta automatycznie odbiera sygnał z innej karty
+        radioChannel.onmessage = function(event) {
+            // Jeśli karta nie ma włączonego przycisku czuwania, ignoruje sygnał
+            if (!isRemizaActive) return;
 
-                document.getElementById('alarm-display-loc').textContent = data.location;
-                document.getElementById('alarm-display-desc').textContent = data.desc;
-                document.getElementById('alarm-box').classList.remove('hidden');
-                
-                if(!speechInterval) {
-                    window.speechSynthesis.speak(alarmSpeech);
-                    speechInterval = setInterval(() => { window.speechSynthesis.speak(alarmSpeech); }, 4000);
-                }
+            const data = event.data;
+            
+            // Automatycznie przełączamy tę kartę w tryb alarmowy
+            switchScreen('screen-remiza');
+
+            document.getElementById('alarm-display-loc').textContent = data.location;
+            document.getElementById('alarm-display-desc').textContent = data.desc;
+            document.getElementById('alarm-box').classList.remove('hidden');
+            
+            if(!speechInterval) {
+                window.speechSynthesis.speak(alarmSpeech);
+                speechInterval = setInterval(() => { window.speechSynthesis.speak(alarmSpeech); }, 4000);
             }
-        });
+        };
 
         function silenceAlarm() {
             clearInterval(speechInterval); speechInterval = null; window.speechSynthesis.cancel();
             document.getElementById('alarm-box').classList.add('hidden');
-            localStorage.removeItem('eremiza_shared_alarm');
         }
     </script>
 </body>
