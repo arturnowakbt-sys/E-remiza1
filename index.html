@@ -28,14 +28,12 @@
     <div class="container">
         <h1>🚨 System E-Remiza</h1>
         
-        <!-- MENU GŁÓWNE -->
         <div id="screen-main" class="card">
             <h3>Wybierz panel operacyjny:</h3>
             <button class="btn" onclick="switchScreen('screen-login')">1 - Panel Dyżurnego</button>
             <button class="btn btn-outline" onclick="switchScreen('screen-remiza')">2 - Panel E-Remiza</button>
         </div>
 
-        <!-- LOGOWANIE -->
         <div id="screen-login" class="card hidden">
             <h3>Logowanie Dyżurnego</h3>
             <label>Login:</label> <input type="text" id="login-user" value="TEST">
@@ -44,7 +42,6 @@
             <button class="btn btn-outline" onclick="switchScreen('screen-main')">Powrót</button>
         </div>
 
-        <!-- PANEL DYŻURNEGO -->
         <div id="screen-dyzurny" class="card hidden">
             <h3>Panel Dyżurnego - Karta Zdarzenia</h3>
             <label>Lokalizacja zdarzenia:</label> <input type="text" id="event-location" value="Chocznia, ul. Główna">
@@ -53,10 +50,9 @@
             <button class="btn btn-outline" onclick="switchScreen('screen-main')">Powrót</button>
         </div>
 
-        <!-- PANEL E-REMIZA -->
         <div id="screen-remiza" class="card hidden">
             <h3>Panel Odbiorczy E-Remiza</h3>
-            <div id="remiza-status" class="status-badge status-inactive">Status: Nieaktywna</div>
+            <div id="remiza-status" class="status-badge status-inactive">Status: Rozłączony</div>
             <button class="btn btn-green" id="btn-activate-remiza" onclick="toggleRemiza()">Aktywuj E-Remizę</button>
             
             <div id="alarm-box" class="hidden">
@@ -72,12 +68,33 @@
     </div>
 
     <script>
+        // Globalny publiczny serwer sieciowy WebSocket (PieSocket)
+        let socket;
+        const api_key = "oCd7EMExNYCwvSTrQCgKu9G6S1wH9wSg67WbN66p";
+        const channel_id = "eremiza_artur_channel_global";
+
         const alarmSpeech = new SpeechSynthesisUtterance("Uwaga! Alarm bojowy dla jednostki e remiza!");
         alarmSpeech.lang = "pl-PL";
         alarmSpeech.rate = 1.0;
 
         let isRemizaActive = false;
         let speechInterval = null;
+
+        // Inicjalizacja stałego połączenia z siecią dla obu paneli
+        function initSocket() {
+            socket = new WebSocket(`wss://://piesocket.com{channel_id}?api_key=${api_key}&notify_self=0`);
+            
+            socket.onmessage = function(event) {
+                if (!isRemizaActive) return;
+                try {
+                    const data = JSON.parse(event.data);
+                    triggerAlarmInterface(data);
+                } catch(e) { console.log("Odebrano niepoprawny pakiet danych."); }
+            };
+
+            socket.onclose = function() { setTimeout(initSocket, 1000); }; // Auto-reconnect przy zerwaniu sieci
+        }
+        initSocket();
 
         function switchScreen(screenId) {
             document.getElementById('screen-main').classList.add('hidden');
@@ -89,17 +106,20 @@
 
         function handleLogin() { switchScreen('screen-dyzurny'); }
 
-        // WYŚLIJ ALARM (Zapis ze specjalnym znacznikiem czasu zmusza przeglądarkę do reakcji)
+        // WYŚLIJ ALARM (Błyskawiczne uderzenie sieciowe przez WebSocket chmury)
         function sendAlarm() {
             const alarmData = {
                 location: document.getElementById('event-location').value,
-                desc: document.getElementById('event-desc').value,
-                trigger: Math.random() // Losowość zapobiega ignorowaniu przez przeglądarkę
+                desc: document.getElementById('event-desc').value
             };
             
-            localStorage.setItem('eremiza_local_event', JSON.stringify(alarmData));
-            alert("Alarm wysłany!");
-            switchScreen('screen-main');
+            if(socket && socket.readyState === WebSocket.OPEN) {
+                socket.send(JSON.stringify(alarmData));
+                alert("Alarm wysłany sieciowo!");
+                switchScreen('screen-main');
+            } else {
+                alert("Brak połączenia z siecią przekaźnikową. Spróbuj za chwilę.");
+            }
         }
 
         function toggleRemiza() {
@@ -108,41 +128,33 @@
 
             if (!isRemizaActive) {
                 isRemizaActive = true;
-                statusBadge.textContent = "Status: Aktywna (Czuwanie włączone)";
+                statusBadge.textContent = "Status: Aktywna (Nasłuchiwanie sieci)";
                 statusBadge.className = "status-badge status-active";
                 btn.textContent = "Dezaktywuj E-Remizę"; btn.className = "btn btn-red";
-                window.speechSynthesis.speak(new SpeechSynthesisUtterance("System aktywowany i czuwa"));
+                window.speechSynthesis.speak(new SpeechSynthesisUtterance("Połączono z satelitarną siecią alarmową"));
             } else {
                 isRemizaActive = false;
-                statusBadge.textContent = "Status: Nieaktywna"; statusBadge.className = "status-badge status-inactive";
+                statusBadge.textContent = "Status: Rozłączony"; statusBadge.className = "status-badge status-inactive";
                 btn.textContent = "Aktywuj E-Remizę"; btn.className = "btn btn-green";
                 silenceAlarm();
             }
         }
 
-        // NIEZAWODNY NASŁUCH ZMIAN MIĘDZY KARTAMI
-        window.addEventListener('storage', function(event) {
-            if (event.key === 'eremiza_local_event' && isRemizaActive && event.newValue) {
-                const data = JSON.parse(event.newValue);
-                
-                // Automatyczne przełączenie karty na widok alarmu
-                switchScreen('screen-remiza');
-
-                document.getElementById('alarm-display-loc').textContent = data.location;
-                document.getElementById('alarm-display-desc').textContent = data.desc;
-                document.getElementById('alarm-box').classList.remove('hidden');
-                
-                if (!speechInterval) {
-                    window.speechSynthesis.speak(alarmSpeech);
-                    speechInterval = setInterval(() => { window.speechSynthesis.speak(alarmSpeech); }, 4000);
-                }
+        function triggerAlarmInterface(data) {
+            switchScreen('screen-remiza');
+            document.getElementById('alarm-display-loc').textContent = data.location;
+            document.getElementById('alarm-display-desc').textContent = data.desc;
+            document.getElementById('alarm-box').classList.remove('hidden');
+            
+            if(!speechInterval) {
+                window.speechSynthesis.speak(alarmSpeech);
+                speechInterval = setInterval(() => { window.speechSynthesis.speak(alarmSpeech); }, 4000);
             }
-        });
+        }
 
         function silenceAlarm() {
             clearInterval(speechInterval); speechInterval = null; window.speechSynthesis.cancel();
             document.getElementById('alarm-box').classList.add('hidden');
-            localStorage.removeItem('eremiza_local_event');
         }
     </script>
 </body>
