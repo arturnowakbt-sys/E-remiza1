@@ -23,6 +23,9 @@
         .alarm-alert { background-color: var(--accent-red); color: white; animation: blink 1s infinite alternate; padding: 20px; border-radius: 10px; font-size: 1.2rem; font-weight: bold; margin-top: 15px; }
         @keyframes blink { 0% { opacity: 0.6; box-shadow: 0 0 10px var(--accent-red); } 100% { opacity: 1; box-shadow: 0 0 30px var(--accent-red); } }
     </style>
+    <!-- Ładowanie bibliotek Firebase niezbędnych do komunikacji sieciowej -->
+    <script src="https://gstatic.com"></script>
+    <script src="https://gstatic.com"></script>
 </head>
 <body>
     <div class="container">
@@ -72,15 +75,19 @@
     </div>
 
     <script>
+        // Konfiguracja darmowej, publicznej testowej bazy danych Firebase Realtime Database
+        const firebaseConfig = {
+            databaseURL: "https://firebasedatabase.app"
+        };
+        firebase.initializeApp(firebaseConfig);
+        const database = firebase.database();
+
         const alarmSpeech = new SpeechSynthesisUtterance("Uwaga! Alarm bojowy dla jednostki e remiza!");
         alarmSpeech.lang = "pl-PL";
         alarmSpeech.rate = 1.0;
 
         let isRemizaActive = false;
         let speechInterval = null;
-
-        // Uruchomienie bezbłędnego kanału radiowego między kartami
-        const radioChannel = new BroadcastChannel('eremiza_global_radio_channel');
 
         function switchScreen(screenId) {
             document.getElementById('screen-main').classList.add('hidden');
@@ -92,16 +99,23 @@
 
         function handleLogin() { switchScreen('screen-dyzurny'); }
 
-        // WYŚLIJ ALARM (Rozsyła sygnał radiowy do wszystkich otwartych kart)
+        // WYŚLIJ ALARM (Zapisuje dane bezpośrednio w bazie Google Firebase w chmurze)
         function sendAlarm() {
             const alarmData = {
                 location: document.getElementById('event-location').value,
-                desc: document.getElementById('event-desc').value
+                desc: document.getElementById('event-desc').value,
+                timestamp: Date.now()
             };
             
-            // Nadajemy sygnał w świat!
-            radioChannel.postMessage(alarmData);
-            alert("Sygnał alarmu nadany radiowo do wszystkich kart!");
+            // Wysyłamy dane na serwer internetowy
+            database.ref('current_alarm').set(alarmData, function(error) {
+                if (error) {
+                    alert("Błąd serwera: " + error);
+                } else {
+                    alert("Alarm wysłany przez internet do bazy Firebase!");
+                    switchScreen('screen-main');
+                }
+            });
         }
 
         function toggleRemiza() {
@@ -113,7 +127,7 @@
                 statusBadge.textContent = "Status: Aktywna (Czuwanie włączone)";
                 statusBadge.className = "status-badge status-active";
                 btn.textContent = "Dezaktywuj E-Remizę"; btn.className = "btn btn-red";
-                window.speechSynthesis.speak(new SpeechSynthesisUtterance("System czuwa i nasłuchuje"));
+                window.speechSynthesis.speak(new SpeechSynthesisUtterance("System połączony z bazą danych i nasłuchuje"));
             } else {
                 isRemizaActive = false;
                 statusBadge.textContent = "Status: Nieaktywna"; statusBadge.className = "status-badge status-inactive";
@@ -122,29 +136,33 @@
             }
         }
 
-        // AKTYWNY NASŁUCH RADIOWY — Karta automatycznie odbiera sygnał z innej karty
-        radioChannel.onmessage = function(event) {
-            // Jeśli karta nie ma włączonego przycisku czuwania, ignoruje sygnał
-            if (!isRemizaActive) return;
+        // PRAWDZIWY INTERNETOWY NASŁUCH — Wywołuje się automatycznie, gdy w bazie danych zmieni się wartość
+        database.ref('current_alarm').on('value', function(snapshot) {
+            const data = snapshot.val();
+            // Ignorujemy, jeśli system remizy jest wyłączony lub baza jest pusta
+            if (!isRemizaActive || !data) return;
 
-            const data = event.data;
-            
-            // Automatycznie przełączamy tę kartę w tryb alarmowy
+            // Zabezpieczenie czasowe przed starymi alarmami sprzed włączenia strony
+            if (Date.now() - data.timestamp > 15000) return;
+
+            // Automatyczne włączenie ekranu alarmu
             switchScreen('screen-remiza');
 
             document.getElementById('alarm-display-loc').textContent = data.location;
             document.getElementById('alarm-display-desc').textContent = data.desc;
             document.getElementById('alarm-box').classList.remove('hidden');
             
-            if(!speechInterval) {
+            if (!speechInterval) {
                 window.speechSynthesis.speak(alarmSpeech);
                 speechInterval = setInterval(() => { window.speechSynthesis.speak(alarmSpeech); }, 4000);
             }
-        };
+        });
 
         function silenceAlarm() {
             clearInterval(speechInterval); speechInterval = null; window.speechSynthesis.cancel();
             document.getElementById('alarm-box').classList.add('hidden');
+            // Czyścimy alarm z bazy danych, żeby nie odpalił się ponownie
+            database.ref('current_alarm').set(null);
         }
     </script>
 </body>
